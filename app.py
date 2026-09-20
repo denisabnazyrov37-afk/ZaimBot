@@ -13,9 +13,9 @@ from telegram.ext import Application, CommandHandler
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-this-password")
+BOT_TOKEN = os.getenv("8972994110:AAEnae91uH3w57YZnqLvpU-LLe2SkyBsRCM", "").strip()
+MINI_APP_URL = os.getenv("https://zaimbot-y3cs.onrender.com", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN123", "change-this-password")
 PORT = int(os.getenv("PORT", "10000"))
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "loan.db")
