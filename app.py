@@ -3,21 +3,26 @@ import sqlite3
 import hashlib
 import hmac
 import json
+import urllib.parse
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, render_template, send_from_directory
+
 from dotenv import load_dotenv
+from flask import Flask, request, jsonify, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MINI_APP_URL = os.getenv("MINI_APP_URL", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-this-password")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "10000"))
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "loan.db")
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+telegram_app = None
 
 
 def db():
@@ -54,22 +59,23 @@ def init_db():
     conn.close()
 
 
-def telegram_user_from_init_data(init_data: str):
+def telegram_user_from_init_data(init_data):
     if not init_data or not BOT_TOKEN:
         return None
 
     params = {}
     for item in init_data.split("&"):
         if "=" in item:
-            k, v = item.split("=", 1)
-            params[k] = v
+            key, value = item.split("=", 1)
+            params[key] = value
 
     received_hash = params.pop("hash", None)
     if not received_hash:
         return None
 
     check_string = "\n".join(
-        f"{k}={params[k]}" for k in sorted(params)
+        f"{key}={params[key]}"
+        for key in sorted(params)
     )
 
     secret_key = hmac.new(
@@ -78,36 +84,38 @@ def telegram_user_from_init_data(init_data: str):
         hashlib.sha256
     ).digest()
 
-    calculated_hash = hmac.new(
+    calculated = hmac.new(
         secret_key,
         check_string.encode(),
         hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(calculated_hash, received_hash):
+    if not hmac.compare_digest(calculated, received_hash):
         return None
 
     try:
-        import urllib.parse
         raw_user = urllib.parse.unquote(params.get("user", ""))
         return json.loads(raw_user)
     except Exception:
         return None
 
 
-def get_auth_user():
+def current_user():
     return telegram_user_from_init_data(
         request.headers.get("X-Telegram-Init-Data", "")
     )
 
 
 def admin_ok():
-    return request.headers.get("X-Admin-Password", "") == ADMIN_PASSWORD
+    return hmac.compare_digest(
+        request.headers.get("X-Admin-Password", ""),
+        ADMIN_PASSWORD
+    )
 
 
 @app.get("/")
 def index():
-    return render_template("index.html", mini_app_url=MINI_APP_URL)
+    return render_template("index.html")
 
 
 @app.get("/admin")
@@ -115,36 +123,97 @@ def admin():
     return render_template("admin.html")
 
 
+@app.get("/health")
+def health():
+    return jsonify({"ok": True})
+
+
+@app.get("/setup-webhook")
+def setup_webhook():
+    if not BOT_TOKEN:
+        return jsonify({"error": "BOT_TOKEN is not configured"}), 500
+
+    if not MINI_APP_URL.startswith("https://"):
+        return jsonify({
+            "error": "MINI_APP_URL must be an HTTPS Render URL"
+        }), 400
+
+    import asyncio
+
+    async def set_hook():
+        tg = Application.builder().token(BOT_TOKEN).build()
+        await tg.bot.set_webhook(
+            url=f"{MINI_APP_URL.rstrip('/')}/telegram/webhook",
+            allowed_updates=Update.ALL_TYPES
+        )
+        await tg.shutdown()
+
+    asyncio.run(set_hook())
+
+    return jsonify({
+        "ok": True,
+        "webhook": f"{MINI_APP_URL.rstrip('/')}/telegram/webhook"
+    })
+
+
+@app.post("/telegram/webhook")
+def telegram_webhook():
+    global telegram_app
+
+    if telegram_app is None:
+        return jsonify({"error": "Bot application is not initialized"}), 503
+
+    update = Update.de_json(
+        request.get_json(force=True),
+        telegram_app.bot
+    )
+
+    import asyncio
+    asyncio.run(telegram_app.process_update(update))
+
+    return "OK"
+
+
 @app.post("/api/application")
 def create_application():
-    user = get_auth_user()
+    user = current_user()
 
-    # Для локального браузерного теста разрешаем DEMO_USER.
+    # Разрешаем браузерный DEMO-режим, чтобы интерфейс можно было проверить
+    # без запуска Telegram. В реальном production его следует убрать.
     if not user:
-        user = {"id": "DEMO_USER", "username": "demo"}
+        user = {
+            "id": "DEMO_USER",
+            "username": "demo"
+        }
 
     data = request.get_json(force=True)
 
     required = [
-        "firstName", "lastName", "phone", "amount",
-        "termDays", "bank", "account", "recipientName"
+        "firstName", "lastName", "phone",
+        "amount", "termDays", "bank",
+        "account", "recipientName"
     ]
 
-    missing = [x for x in required if not data.get(x)]
+    missing = [field for field in required if not data.get(field)]
+
     if missing:
         return jsonify({
-            "error": "Не заполнены обязательные поля",
+            "error": "Заполните обязательные поля",
             "fields": missing
         }), 400
 
     now = datetime.now(timezone.utc).isoformat()
 
     conn = db()
-    cur = conn.execute("""
+
+    cursor = conn.execute("""
         INSERT INTO applications (
-            telegram_user_id, username, first_name, last_name, patronymic,
-            phone, birth_date, address, amount, term_days,
-            bank, account, bik, recipient_name, status, created_at, updated_at
+            telegram_user_id, username,
+            first_name, last_name, patronymic,
+            phone, birth_date, address,
+            amount, term_days,
+            bank, account, bik, recipient_name,
+            status, created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     """, (
@@ -166,27 +235,36 @@ def create_application():
         now
     ))
 
-    app_id = cur.lastrowid
+    application_id = cursor.lastrowid
+
     conn.commit()
     conn.close()
 
-    return jsonify({"ok": True, "applicationId": app_id})
+    return jsonify({
+        "ok": True,
+        "applicationId": application_id
+    })
 
 
 @app.get("/api/my-applications")
 def my_applications():
-    user = get_auth_user()
+    user = current_user()
     user_id = str(user["id"]) if user else "DEMO_USER"
 
     conn = db()
+
     rows = conn.execute("""
-        SELECT * FROM applications
+        SELECT *
+        FROM applications
         WHERE telegram_user_id=?
         ORDER BY id DESC
     """, (user_id,)).fetchall()
+
     conn.close()
 
-    return jsonify({"applications": [dict(x) for x in rows]})
+    return jsonify({
+        "applications": [dict(row) for row in rows]
+    })
 
 
 @app.get("/api/admin/applications")
@@ -200,38 +278,50 @@ def admin_applications():
     ).fetchall()
     conn.close()
 
-    return jsonify({"applications": [dict(x) for x in rows]})
+    return jsonify({
+        "applications": [dict(row) for row in rows]
+    })
 
 
-@app.post("/api/admin/applications/<int:app_id>/status")
-def change_status(app_id):
+@app.post("/api/admin/applications/<int:application_id>/status")
+def change_status(application_id):
     if not admin_ok():
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(force=True)
     status = data.get("status")
 
-    if status not in {"approved", "rejected", "paid"}:
+    if status not in {
+        "approved",
+        "rejected",
+        "paid"
+    }:
         return jsonify({"error": "Invalid status"}), 400
 
     now = datetime.now(timezone.utc).isoformat()
 
     conn = db()
-    cur = conn.execute("""
+
+    cursor = conn.execute("""
         UPDATE applications
         SET status=?, updated_at=?
         WHERE id=?
-    """, (status, now, app_id))
+    """, (
+        status,
+        now,
+        application_id
+    ))
+
     conn.commit()
     conn.close()
 
-    if cur.rowcount == 0:
+    if cursor.rowcount == 0:
         return jsonify({"error": "Заявка не найдена"}), 404
 
     return jsonify({"ok": True})
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     text = (
         "👋 Добро пожаловать!\n\n"
         "Здесь можно заполнить заявку и отслеживать её статус.\n\n"
@@ -259,50 +349,53 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update, context):
     await update.message.reply_text(
-        "Нажмите /start и выберите нужное действие."
+        "Нажмите /start и выберите действие."
     )
 
 
-def run_bot():
+def create_telegram_application():
+    global telegram_app
+
     if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN не задан. Заполните .env"
-        )
+        raise RuntimeError("BOT_TOKEN не задан")
 
     if not MINI_APP_URL:
-        raise RuntimeError(
-            "MINI_APP_URL не задан. Заполните .env"
-        )
+        raise RuntimeError("MINI_APP_URL не задан")
 
-    import threading
+    telegram_app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .updater(None)
+        .build()
+    )
 
-    def flask_thread():
-        app.run(
-            host="0.0.0.0",
-            port=PORT,
-            debug=False,
-            use_reloader=False
-        )
+    telegram_app.add_handler(
+        CommandHandler("start", start)
+    )
 
-    threading.Thread(
-        target=flask_thread,
-        daemon=True
-    ).start()
+    telegram_app.add_handler(
+        CommandHandler("help", help_command)
+    )
 
-    bot = Application.builder().token(BOT_TOKEN).build()
+    return telegram_app
 
-    bot.add_handler(CommandHandler("start", start))
-    bot.add_handler(CommandHandler("help", help_command))
 
-    print("🤖 Telegram-бот запущен")
-    print(f"🌐 Web server: http://127.0.0.1:{PORT}")
-    print(f"🖥️ Admin: http://127.0.0.1:{PORT}/admin")
+# Инициализация при импорте Gunicorn.
+init_db()
 
-    bot.run_polling()
+if BOT_TOKEN and MINI_APP_URL:
+    try:
+        create_telegram_application()
+        print("Telegram application initialized")
+    except Exception as exc:
+        print("Telegram initialization warning:", exc)
 
 
 if __name__ == "__main__":
-    init_db()
-    run_bot()
+    app.run(
+        host="0.0.0.0",
+        port=PORT,
+        debug=False
+    )

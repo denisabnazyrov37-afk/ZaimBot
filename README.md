@@ -1,38 +1,37 @@
-# Loan Telegram Mini App — Python
+# Telegram Loan Mini App — Render version
 
-Демонстрационный проект на Python:
-- Telegram-бот
-- Telegram Mini App
-- Flask API
-- SQLite
+Эта версия подготовлена специально для Render.
+
+Архитектура:
+- Flask + Gunicorn — веб-сервер и Mini App
+- Telegram Bot API Webhook — бот
+- SQLite — демо-база
 - веб-админка
-- заявки, статусы, одобрение/отказ
-- отметка ручной выдачи
 
-## Быстрый запуск Windows
+## Render
 
-1. Установить Python 3.11+.
-2. Открыть PowerShell в этой папке.
-3. Создать окружение:
-   python -m venv venv
-4. Активировать:
-   venv\Scripts\activate
-5. Установить зависимости:
-   pip install -r requirements.txt
-6. Скопировать `.env.example` в `.env`.
-7. Вставить токен BotFather в BOT_TOKEN.
-8. Для первого запуска можно оставить MINI_APP_URL=http://127.0.0.1:8000 для теста сайта,
-   но Telegram Mini App в реальном использовании должен быть доступен по HTTPS.
-9. Запустить:
-   python app.py
+Build Command:
+pip install -r requirements.txt
 
-Админка:
-http://127.0.0.1:8000/admin
+Start Command:
+gunicorn app:app
 
-Пароль берётся из ADMIN_PASSWORD.
+Environment Variables:
+BOT_TOKEN = токен от BotFather
+ADMIN_PASSWORD = пароль админки
+PORT = 10000
+MINI_APP_URL = URL Render, например https://loan-telegram-bot.onrender.com
 
-ВАЖНО:
-Это технический демо-прототип. Он не переводит деньги через СБП и не реализует
-юридически значимое заключение договора. Перед реальным запуском нужны отдельные
-проверки юридической модели, идентификации, электронного подписания, персональных
-данных, реквизитов, документов и требований к конкретному кредитору.
+После первого деплоя:
+1. Скопируйте выданный Render URL.
+2. Поставьте его в MINI_APP_URL.
+3. Сделайте redeploy.
+4. Откройте `/setup-webhook` один раз в браузере.
+5. Откройте Telegram и отправьте боту /start.
+
+Важно:
+- Render filesystem не предназначен для постоянного хранения SQLite на production.
+- Для настоящего сервиса используйте PostgreSQL.
+- Этот проект не делает реальных переводов через СБП.
+- Юридически значимое подписание договора и реальные финансовые операции не реализованы.
+- Не храните реальные банковские реквизиты клиентов в этой демо-базе без отдельной защищённой архитектуры.
