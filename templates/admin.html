@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Админ-панель</title>
+<style>
+body{margin:0;background:#07111f;color:#eef4fb;font:14px Arial}
+.wrap{max-width:1250px;margin:auto;padding:24px}
+input,button{padding:10px;border-radius:8px;border:1px solid #294466;background:#10213a;color:#fff}
+button{cursor:pointer}.login{margin-bottom:20px}
+table{width:100%;border-collapse:collapse;background:#0d1b2d}
+th,td{padding:10px;border-bottom:1px solid #203754;text-align:left;vertical-align:top}
+.approve{background:#15945a}.reject{background:#c63e3e}.paid{background:#2563eb}
+small{color:#9db0c9}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>📊 Панель управления</h1>
+
+<div class="login">
+<input id="password" type="password" placeholder="Пароль администратора">
+<button onclick="load()">Войти</button>
+</div>
+
+<div id="out"></div>
+</div>
+
+<script>
+let password="";
+
+async function load(){
+ password=document.getElementById("password").value;
+
+ const r=await fetch("/api/admin/applications",{
+  headers:{"X-Admin-Password":password}
+ });
+
+ const data=await r.json();
+
+ if(!r.ok){
+  alert("Неверный пароль");
+  return;
+ }
+
+ render(data.applications);
+}
+
+function render(items){
+ let html=`
+ <table>
+ <tr>
+  <th>№</th>
+  <th>Клиент</th>
+  <th>Сумма</th>
+  <th>Срок</th>
+  <th>Реквизиты</th>
+  <th>Статус</th>
+  <th>Действия</th>
+ </tr>`;
+
+ for(const a of items){
+  html+=`
+  <tr>
+   <td>${a.id}</td>
+   <td>
+    <b>${a.last_name} ${a.first_name}</b><br>
+    ${a.patronymic||""}<br>
+    ${a.phone}<br>
+    <small>${a.username||""}</small>
+   </td>
+   <td>${Number(a.amount).toLocaleString("ru-RU")} ₽</td>
+   <td>${a.term_days} дней</td>
+   <td>
+    ${a.bank}<br>
+    ${a.account}<br>
+    ${a.bik||""}<br>
+    ${a.recipient_name}
+   </td>
+   <td>${statusText(a.status)}</td>
+   <td>
+    ${a.status==="pending" ? `
+      <button class="approve" onclick="changeStatus(${a.id},'approved')">Одобрить</button>
+      <button class="reject" onclick="changeStatus(${a.id},'rejected')">Отказать</button>
+    `:""}
+    ${a.status==="approved" ? `
+      <button class="paid" onclick="changeStatus(${a.id},'paid')">Я перевёл деньги</button>
+    `:""}
+   </td>
+  </tr>`;
+ }
+
+ html+="</table>";
+ document.getElementById("out").innerHTML=html;
+}
+
+function statusText(s){
+ return {
+  pending:"🟡 На рассмотрении",
+  approved:"🟢 Одобрена",
+  rejected:"🔴 Отказана",
+  paid:"💸 Выдана"
+ }[s]||s;
+}
+
+async function changeStatus(id,status){
+ const r=await fetch("/api/admin/applications/"+id+"/status",{
+  method:"POST",
+  headers:{
+   "Content-Type":"application/json",
+   "X-Admin-Password":password
+  },
+  body:JSON.stringify({status})
+ });
+
+ if(!r.ok){
+  alert("Ошибка");
+  return;
+ }
+
+ load();
+}
+</script>
+</body>
+</html>

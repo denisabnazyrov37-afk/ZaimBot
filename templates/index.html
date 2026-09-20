@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Займы Онлайн</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:#07111f;--card:#10213a;--line:#27405f;--text:#f4f7fb;--muted:#9db0c9;--blue:#3182ff;--green:#19b86a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px Arial,sans-serif}
+.wrap{max-width:620px;margin:auto;padding:18px 16px 40px}.brand{font-size:25px;font-weight:800;margin-bottom:5px}.muted{color:var(--muted)}
+.card{background:linear-gradient(145deg,#112844,#0c1b30);border:1px solid var(--line);border-radius:18px;padding:17px;margin:12px 0}
+h2{margin-top:0}label{display:block;color:var(--muted);font-size:13px;margin:12px 0 6px}
+input,select{width:100%;padding:13px;border:1px solid #2a4667;border-radius:11px;background:#09182a;color:white;font-size:15px}
+button{width:100%;padding:14px;border:0;border-radius:12px;background:var(--blue);color:white;font-weight:700;margin-top:12px}
+button.secondary{background:#1a304b}.status{display:inline-block;padding:5px 9px;border-radius:999px;background:#29415f;font-size:12px}
+.notice{font-size:12px;line-height:1.45;color:var(--muted)}
+.hidden{display:none}.row{display:flex;justify-content:space-between;margin:8px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="brand">Займы Онлайн</div>
+<div class="muted">Личный кабинет</div>
+
+<section id="home" class="card">
+<h2>Добро пожаловать</h2>
+<p class="muted">Подайте заявку и отслеживайте её статус прямо в Telegram.</p>
+<button onclick="show('form')">📝 Получить займ</button>
+<button class="secondary" onclick="loadApps()">📋 Мои заявки</button>
+</section>
+
+<section id="form" class="card hidden">
+<h2>Заявка на займ</h2>
+
+<label>Имя *</label><input id="firstName">
+<label>Фамилия *</label><input id="lastName">
+<label>Отчество</label><input id="patronymic">
+<label>Телефон *</label><input id="phone" placeholder="+7...">
+<label>Дата рождения</label><input id="birthDate" placeholder="ДД.ММ.ГГГГ">
+<label>Адрес</label><input id="address">
+
+<label>Сумма *</label>
+<input id="amount" type="number" value="30000">
+
+<label>Срок *</label>
+<select id="termDays">
+<option value="7">7 дней</option>
+<option value="14">14 дней</option>
+<option value="30" selected>30 дней</option>
+<option value="60">60 дней</option>
+</select>
+
+<h3>💳 Реквизиты для получения</h3>
+
+<label>Банк *</label><input id="bank">
+<label>Номер счёта/карты *</label><input id="account">
+<label>БИК</label><input id="bik">
+<label>ФИО получателя *</label><input id="recipientName">
+
+<p class="notice">
+Демо-форма. В реальном сервисе персональные данные и реквизиты
+нужно обрабатывать по отдельной защищённой и юридически согласованной схеме.
+</p>
+
+<button onclick="submitApplication()">✅ Отправить заявку</button>
+<button class="secondary" onclick="show('home')">Назад</button>
+</section>
+
+<section id="result" class="card hidden"></section>
+</div>
+
+<script>
+const tg=window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+function show(id){
+ document.querySelectorAll("section").forEach(x=>x.classList.add("hidden"));
+ document.getElementById(id).classList.remove("hidden");
+}
+
+function val(id){return document.getElementById(id).value.trim()}
+
+async function api(url,options={}){
+ options.headers={
+  ...(options.headers||{}),
+  "Content-Type":"application/json",
+  "X-Telegram-Init-Data":tg?.initData||""
+ };
+ const r=await fetch(url,options);
+ const data=await r.json();
+ if(!r.ok)throw new Error(data.error||"Ошибка");
+ return data;
+}
+
+async function submitApplication(){
+ try{
+  const body={
+   firstName:val("firstName"),
+   lastName:val("lastName"),
+   patronymic:val("patronymic"),
+   phone:val("phone"),
+   birthDate:val("birthDate"),
+   address:val("address"),
+   amount:val("amount"),
+   termDays:val("termDays"),
+   bank:val("bank"),
+   account:val("account"),
+   bik:val("bik"),
+   recipientName:val("recipientName")
+  };
+
+  const data=await api("/api/application",{
+   method:"POST",
+   body:JSON.stringify(body)
+  });
+
+  document.getElementById("result").innerHTML=`
+   <h2>✅ Заявка отправлена</h2>
+   <p>Номер заявки: <b>№${data.applicationId}</b></p>
+   <p class="muted">Статус: на рассмотрении.</p>
+   <button onclick="loadApps()">📋 Мои заявки</button>
+   <button class="secondary" onclick="show('home')">На главную</button>
+  `;
+
+  show("result");
+ }catch(e){alert(e.message)}
+}
+
+async function loadApps(){
+ try{
+  const data=await api("/api/my-applications");
+
+  let html="<h2>📋 Мои заявки</h2>";
+
+  if(!data.applications.length){
+   html+="<p class='muted'>Заявок пока нет.</p>";
+  }else{
+   data.applications.forEach(a=>{
+    html+=`
+    <div class="card">
+      <div class="row">
+        <b>Заявка №${a.id}</b>
+        <span class="status">${statusText(a.status)}</span>
+      </div>
+      <div class="row"><span class="muted">Сумма</span><b>${Number(a.amount).toLocaleString("ru-RU")} ₽</b></div>
+      <div class="row"><span class="muted">Срок</span><b>${a.term_days} дней</b></div>
+    </div>`;
+   });
+  }
+
+  html+="<button class='secondary' onclick=\"show('home')\">Назад</button>";
+  document.getElementById("result").innerHTML=html;
+  show("result");
+ }catch(e){alert(e.message)}
+}
+
+function statusText(s){
+ return {
+  pending:"На рассмотрении",
+  approved:"Одобрена",
+  rejected:"Отказана",
+  paid:"Выдана"
+ }[s]||s;
+}
+</script>
+</body>
+</html>
